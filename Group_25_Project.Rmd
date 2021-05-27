@@ -1,0 +1,158 @@
+---
+title: "Factors Correlated With State Reopening Rates"
+author: Marshall Bushman, Mingze Gao, Alec Gossai, Hanna Yu
+date: "4/15/2021"
+output: html_document
+---
+
+# Introduction
+In this project, we examine factors correlated with state's levels of COVID-19 pandemic reopening in the United States. We consider the percentage of fully vaccinated people in each state, the share of essential industries in each state, and the political affiliation of state governors.
+
+Methodology  
+All the data are taken between April 7 and April 10th, 2021. We use a multiple regression best linear predictor model. 
+
+Findings  
+Using a Wald test, we find that our overall model with all three regressors is significant at a 5% level with P-Value 6.948e-11. However, individual t-tests show that only party affiliation is significant: on average, states with Republican governors are score 23.7488 points (out of a maximum of 100) higher on reopening than states with Democrat governors. 
+
+```{r message = FALSE}
+library("foreign")    # to import stata data files
+library("AER")        # contains ivreg command
+```
+
+# Data
+Our variables of interest are:  
+* `Score`: COVID-19 State Reopening Score  
+* `Percent_vaccinated`: Percent of population fully vaccinated  
+* `Percent_ess`: Share of essential industries that are not health care nor front line  
+* `Gov_party`: Party affiliation of the state governors  
+
+These are collected from the following sources:  
+
+COVID-19 State Reopening Guide  
+https://www.multistate.us/issues/covid-19-state-reopening-guide  
+CDC COVID Data Tracker  
+https://covid.cdc.gov/covid-data-tracker/#vaccinations  
+Share of private employment in pandemic-essential industries  
+https://www.bls.gov/opub/ted/2021/107-5-million-private-sector-workers-in-pandemic-essential-industries-in-2019.htm  
+State party control, contains both legislature and governor parties  
+https://www.kff.org/other/state-indicator/state-political-parties/?currentTimeframe=0&selectedDistributions=governor-political-affiliation--state-senate-majority-political-affiliation--state-house-majority-political-affiliation--state-attorney-general-political-affiliation--state-insurance-commissioner-political-affiliation&sortModel=%7B%22colId%22:%22Location%22,%22sort%22:%22asc%22%7D 
+
+State reopening scores are calculated by the consulting firm MultiState. States were evaluated based on eleven factors including whether or not a stay-at-home order is in place, whether businesses are reopened and limits on the size of in-person gatherings. 
+
+Essential industries, also called "pandemic-essential" industries, are determined based on the CDC's recommended vaccination phases. We use industries in the "Phase 1C" category, which are "other essential industries" not including essential health care industries and front line essential industries.
+
+
+## Preliminary data analysis
+Load our datasets
+```{r}
+reopening_data <- read.csv("reopening_data.csv") # 4/7/21
+# daily_travel <- read.csv("Trips_by_Distance.csv") # 4/5/21
+cdc_vaccine <- read.csv("covid19_vaccinations_in_the_united_states.csv") # 4/10/21
+party <- read.csv("state_political_parties.csv") # 2021
+essential <- read.csv("essential industries.csv")
+
+# Cleaning
+colnames(reopening_data)[1] <- "State"
+colnames(cdc_vaccine)[1] <- "State"
+cdc_vaccine[cdc_vaccine$State=="New York State","State"] <- "New York";
+colnames(party)[1] <- "State"
+```
+
+Extract the information we want into `df`.
+```{r}
+reopening_data <- reopening_data[order(reopening_data$State),]
+df <- data.frame(State = reopening_data$State, Score = reopening_data$Score)
+vaccine_states <- subset(cdc_vaccine,
+                         State %in% c("Alabama", "Alaska", "Arizona", "Arkansas", 
+                                      "California", "Colorado", "Connecticut", "Delaware",
+                                      "Florida", "Georgia", "Hawaii", "Idaho", "Illinois",
+                                      "Indiana", "Iowa", "Kansas", "Kentucky", 
+                                      "Louisiana", "Maine", "Maryland", "Massachusetts", 
+                                      "Michigan", "Minnesota", "Mississippi", "Missouri", 
+                                      "Montana", "Nebraska", "Nevada", "New Hampshire", 
+                                      "New Jersey", "New Mexico", "New York", 
+                                      "North Carolina", "North Dakota", "Ohio", 
+                                      "Oklahoma", "Oregon", "Pennsylvania",
+                                      "Rhode Island", "South Carolina", "South Dakota", 
+                                      "Tennessee", "Texas", "Utah", "Vermont", "Virginia",
+                                      "Washington", "West Virginia", "Wisconsin", 
+                                      "Wyoming"))
+vaccine_states <- vaccine_states[order(vaccine_states$State),]
+df$Percent_vaccinated <- 
+  vaccine_states$Percent.of.Total.Pop.Fully.Vaccinated.by.State.of.Residence 
+df <- cbind(State_abbrev = 
+              c("AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "FL", "GA", "HI", "ID", 
+                "IL", "IN", "IA", "KS", "KY", "LA", "ME", "MD", "MA", "MI", "MN", "MS", 
+                "MO", "MT", "NE", "NV", "NH", "NJ", "NM", "NY", "NC", "ND", "OH", "OK", 
+                "OR", "PA", "RI", "SC", "SD", "TN", "TX", "UT", "VT", "VA", "WA", "WV", 
+                "WI", "WY"), df)
+
+party_states <- subset(party, State != "United States" & 
+                         State != "District of Columbia")
+df$Gov_party = as.factor(party_states$Governor.Political.Affiliation)
+
+essential_states <- subset(essential, State != "U.S. total[1]" & 
+                           State != "District of Columbia" & 
+                           State != "Puerto Rico" &
+                           State != "U.S. Virgin Islands")
+# colnames(essential_states) <- essential_states[1,]
+# colnames(essential_states)[1] <- "States"
+essential_states <- essential_states[-c(1),]
+df$Percent_ess = essential_states$X.2
+```
+We create plots.
+```{r}
+# Score vs Percent_vaccinated
+plot(Score ~ Percent_vaccinated, data = df)
+df <- transform(df, Percent_vaccinated = as.numeric(Percent_vaccinated))
+
+# Score vs Percent_ess
+df <- transform(df, Percent_ess = as.numeric(Percent_ess)) #typeof(df$Percent_ess[1])
+plot(Score ~ Percent_ess, data = df)
+
+# Score vs. Gov_party
+plot(Score ~ as.factor(Gov_party), data = df)
+text(Score ~ as.factor(Gov_party), data = df, labels = State_abbrev, pos = 2)
+```
+
+# Methodology
+
+We estimate the effect of each factor using the following model:  
+$$Score = \gamma_0 + \gamma_1Gov\_party + \gamma_2Percent\_vaccinated + \gamma_3Percent\_ess$$
+We estimate these parameters by performing multiple linear regression. We use the BLP model instead of the causal model because we believe Assumption 1 does not hold here. For example, we expect the party affiliation of state legislatures to be an ommitted variable that (1) is correlated with the party of state governor, and (2) has a causal effect on the reopening score. Finally, we expect that Assumptions 2 (all our regressors are IID), 3 (large outliers are unlikely), and 4 (no perfect multicollinearity exists) hold.
+
+# Estimation and inference
+We estimate the multiple linear regression.
+```{r}
+fm <- lm(Score ~ as.factor(Gov_party) + Percent_ess + Percent_vaccinated, data = df)
+coeftest(fm, vcov = vcovHC(fm, type = "HC1"), df = Inf)
+```
+The positive correlation between our reopening score and state governor party affiliation is consistent with recent news that conservative states desire to reopen faster.  
+
+
+We perform a Wald Test to test the overall significance of our model.
+```{r}
+fm2 <- lm(Score ~ 1, data = df)
+waldtest(fm2, fm, test = "Chisq", vcov = vcovHC(fm, type = "HC1"))
+```
+The Wald test shows that our overall model is significant at the 10% level with P-Value 6.948e-11.  
+
+We are perform individual t-tests on all three of our regressors.
+```{r collapse = TRUE}
+# Percent vaccinted
+fm <- lm(Score ~ Percent_vaccinated, data = df)
+coeftest(fm, vcov = vcovHC(fm, type = "HC1"), df = Inf)
+
+# Essential industries
+fm <- lm(Score ~ Percent_ess, data = df)
+coeftest(fm, vcov = vcovHC(fm, type = "HC1"), df = Inf)
+
+# Political party
+fm <- lm(Score ~ as.factor(Gov_party), data = df)
+coeftest(fm, vcov = vcovHC(fm, type = "HC1"), df = Inf)
+```
+Our results provide evidence against the fact that the percentage of population fully vaccinated is correlated with reopening levels, an indication that public health readiness is not a main concern when states reopen. The share of essential industries in each state does not show significant correlation either. 
+Reopening statistics are only significantly correlated with state governor political affiliation, affirming some of our sentiments on the political environment surrounding the COVID-19 pandemic in the United States.
+
+# Conclusion
+In our project, we looked at three factors we thought might correlated with state reopening levels. We found that among the percentage of state populations vaccinated, the percentage of essential industries in each state, and state governors' political affiliations, only the last factor was significantly correlated.
